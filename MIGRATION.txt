@@ -1,0 +1,31 @@
+workspace.sh -> space (Go) migration notes
+
+1) Build and run:
+   go build ./cmd/space
+   ./space help
+
+2) Config:
+   ./space config init
+   ./space config show
+   Config path: ~/.config/space/config.json
+
+3) Shell cd wrapper (zsh/bash):
+   space() {
+     local out
+     out=$(/path/to/space "$@")
+     echo "$out" | grep -v '^__SPACE_CD__:'
+     local target
+     target=$(echo "$out" | awk -F: '/^__SPACE_CD__:/ {print substr($0, index($0,$2))}' | tail -1)
+     [ -n "$target" ] && [ -d "$target" ] && cd "$target"
+   }
+
+4) Core commands:
+   space create <workspace> <repo-query>...
+   space add <workspace> <repo-query>...
+   space list
+   space status <workspace>
+   space remove <workspace> [--force]
+   space repos [--refresh]
+   space go [workspace]
+   space bootstrap-repo <name> [--workspace <workspace>]
+
