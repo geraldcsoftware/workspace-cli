@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,18 +46,19 @@ func CacheFilePath() string {
 }
 
 func EnsureAndLoad() (Config, error) {
-	if err := os.MkdirAll(configDir(), 0o755); err != nil {
-		return Config{}, err
+	dir := configDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return Config{}, fmt.Errorf("cannot create config directory %q: %w", dir, err)
 	}
 	if err := SaveDefaultsIfMissing(); err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("cannot write default config to %q: %w", ConfigFilePath(), err)
 	}
 	cfg, err := Load()
 	if err != nil {
 		return Config{}, err
 	}
 	if err := os.MkdirAll(cfg.WorkspaceBaseDir, 0o755); err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("cannot create workspace base dir %q: %w", cfg.WorkspaceBaseDir, err)
 	}
 	return cfg, nil
 }
@@ -71,13 +74,17 @@ func SaveDefaultsIfMissing() error {
 }
 
 func Load() (Config, error) {
+	path := ConfigFilePath()
 	cfg := defaults()
-	data, err := os.ReadFile(ConfigFilePath())
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return cfg, err
+		if errors.Is(err, os.ErrNotExist) {
+			return cfg, fmt.Errorf("config file not found at %q — run `space config init` to create one", path)
+		}
+		return cfg, fmt.Errorf("cannot read config file %q: %w", path, err)
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return cfg, err
+		return cfg, fmt.Errorf("config file %q is not valid JSON: %w", path, err)
 	}
 	cfg.WorkspaceBaseDir = expandPath(cfg.WorkspaceBaseDir)
 	for i, root := range cfg.RepoRoots {
