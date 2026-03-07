@@ -6,8 +6,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
+
+type BranchInfo struct {
+	Name       string
+	IsRemote   bool
+	IsLocal    bool
+	Upstream   string
+	Ahead      int
+	Behind     int
+	LastCommit time.Time
+}
 
 func DetectBaseBranch(repoPath string) string {
 	for _, branch := range []string{"main", "master", "develop"} {
@@ -25,21 +38,39 @@ func DetectBaseBranch(repoPath string) string {
 	return strings.TrimSpace(out)
 }
 
-func AddWorktree(repoPath, wtPath, workspaceName, strategy string) error {
-	base := DetectBaseBranch(repoPath)
-	_ = runGit(repoPath, "fetch", "--quiet", "origin")
-
-	if strategy == "detach" {
-		return runGit(repoPath, "worktree", "add", "--detach", wtPath, base)
+func AddWorktree(repoPath, wtPath, branch string, isNew bool, base string) error {
+	if isNew {
+		if base != "" {
+			return runGit(repoPath, "worktree", "add", "-b", branch, wtPath, base)
+		}
+		return runGit(repoPath, "worktree", "add", "-b", branch, wtPath)
 	}
 
-	if gitOK(repoPath, "rev-parse", "--verify", workspaceName) {
-		return runGit(repoPath, "worktree", "add", wtPath, workspaceName)
+	// If the branch exists locally, use it
+	if gitOK(repoPath, "rev-parse", "--verify", branch) {
+		return runGit(repoPath, "worktree", "add", wtPath, branch)
 	}
-	if gitOK(repoPath, "rev-parse", "--verify", "origin/"+workspaceName) {
-		return runGit(repoPath, "worktree", "add", "--track", "-b", workspaceName, wtPath, "origin/"+workspaceName)
+
+	// If it's a remote branch (e.g. from origin), track it
+	remoteBranch := branch
+	if !strings.HasPrefix(remoteBranch, "origin/") {
+		remoteBranch = "origin/" + branch
 	}
-	return runGit(repoPath, "worktree", "add", "-b", workspaceName, wtPath, base)
+
+	if gitOK(repoPath, "rev-parse", "--verify", remoteBranch) {
+		localName := strings.TrimPrefix(remoteBranch, "origin/")
+		return runGit(repoPath, "worktree", "add", "--track", "-b", localName, wtPath, remoteBranch)
+	}
+
+	// Fallback: create a new branch from base (requested for legacy Add/Create)
+	if base == "" {
+		base = DetectBaseBranch(repoPath)
+	}
+	return runGit(repoPath, "worktree", "add", "-b", branch, wtPath, base)
+}
+
+func AddWorktreeDetach(repoPath, wtPath, base string) error {
+	return runGit(repoPath, "worktree", "add", "--detach", wtPath, base)
 }
 
 func RemoveWorktree(wtPath string) error {
@@ -54,21 +85,94 @@ func RemoveWorktree(wtPath string) error {
 }
 
 func MainRepoFromWorktree(wtPath string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(wtPath, ".git"))
+	// The requested command for reliability
+	out, err := gitOutput(wtPath, "rev-parse", "--git-common-dir")
 	if err != nil {
 		return "", err
 	}
-	line := strings.TrimSpace(string(data))
-	prefix := "gitdir: "
-	if !strings.HasPrefix(line, prefix) {
-		return "", fmt.Errorf("unexpected .git format in %s", wtPath)
+	commonDir := strings.TrimSpace(out)
+	absCommonDir, err := filepath.Abs(filepath.Join(wtPath, commonDir))
+	if err != nil {
+		return "", err
 	}
-	gitDir := strings.TrimPrefix(line, prefix)
-	idx := strings.Index(gitDir, "/.git/worktrees/")
-	if idx == -1 {
-		return "", fmt.Errorf("not a worktree gitdir: %s", gitDir)
+	// The parent of the .git directory (the common dir) is the repo root
+	return filepath.Dir(absCommonDir), nil
+}
+
+func Fetch(path string) error {
+	return runGit(path, "fetch", "--quiet", "--prune", "origin")
+}
+
+func GetBranches(path string) ([]BranchInfo, error) {
+	// format: refname:short|upstream:short|committerdate:unix
+	format := "%(refname:short)|%(upstream:short)|%(committerdate:unix)"
+	out, err := gitOutput(path, "for-each-ref", "--sort=-committerdate", "--format="+format, "refs/heads", "refs/remotes/origin")
+	if err != nil {
+		return nil, err
 	}
-	return gitDir[:idx], nil
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	branchMap := make(map[string]*BranchInfo)
+
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) < 3 {
+			continue
+		}
+		refName := parts[0]
+		upstream := parts[1]
+		unixTime, _ := strconv.ParseInt(parts[2], 10, 64)
+		commitTime := time.Unix(unixTime, 0)
+
+		isRemote := strings.HasPrefix(refName, "origin/")
+		name := strings.TrimPrefix(refName, "origin/")
+
+		info, ok := branchMap[name]
+		if !ok {
+			info = &BranchInfo{Name: name, LastCommit: commitTime}
+			branchMap[name] = info
+		}
+
+		if isRemote {
+			info.IsRemote = true
+		} else {
+			info.IsLocal = true
+			info.Upstream = upstream
+			if info.LastCommit.Before(commitTime) {
+				info.LastCommit = commitTime
+			}
+		}
+	}
+
+	var branches []BranchInfo
+	for _, info := range branchMap {
+		if info.IsLocal && info.Upstream != "" {
+			// Calculate ahead/behind
+			ahead, _ := gitCount(path, info.Upstream+".."+info.Name)
+			behind, _ := gitCount(path, info.Name+".."+info.Upstream)
+			info.Ahead = ahead
+			info.Behind = behind
+		}
+		branches = append(branches, *info)
+	}
+
+	// Sort by date again because map iteration is random
+	sort.Slice(branches, func(i, j int) bool {
+		return branches[i].LastCommit.After(branches[j].LastCommit)
+	})
+
+	return branches, nil
+}
+
+func gitCount(path, revRange string) (int, error) {
+	out, err := gitOutput(path, "rev-list", "--count", revRange)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(out))
 }
 
 func StatusPorcelain(path string) (string, error) {

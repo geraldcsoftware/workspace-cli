@@ -32,6 +32,14 @@ type StatusInfo struct {
 	Repos []RepoStatus
 }
 
+type RepoConfig struct {
+	RepoPath    string
+	Branch      string
+	IsNewBranch bool
+	BaseBranch  string
+	Strategy    string // "branch" or "detach"
+}
+
 func Create(cfg config.Config, wsName string, repoQueries []string, strategy string) ([]string, error) {
 	wsDir := filepath.Join(cfg.WorkspaceBaseDir, wsName)
 	if _, err := os.Stat(wsDir); err == nil {
@@ -43,14 +51,14 @@ func Create(cfg config.Config, wsName string, repoQueries []string, strategy str
 	return addResolved(cfg, wsName, wsDir, repoQueries, strategy)
 }
 
-// CreateFromPaths creates a new workspace from already-resolved absolute repo
-// paths. All validation runs before any directory is created on disk.
-func CreateFromPaths(cfg config.Config, wsName string, repoPaths []string, strategy string) ([]string, error) {
+// CreateFromConfig creates a new workspace using the provided configurations.
+func CreateFromConfig(cfg config.Config, wsName string, repoConfigs []RepoConfig) ([]string, error) {
 	wsDir := filepath.Join(cfg.WorkspaceBaseDir, wsName)
 	if _, err := os.Stat(wsDir); err == nil {
 		return nil, fmt.Errorf("workspace %q already exists", wsName)
 	}
-	for _, path := range repoPaths {
+	for _, rc := range repoConfigs {
+		path := rc.RepoPath
 		st, err := os.Stat(path)
 		if err != nil || !st.IsDir() {
 			return nil, fmt.Errorf("repo path not found: %s", path)
@@ -62,14 +70,22 @@ func CreateFromPaths(cfg config.Config, wsName string, repoPaths []string, strat
 	if err := os.MkdirAll(wsDir, 0o755); err != nil {
 		return nil, err
 	}
-	added := make([]string, 0, len(repoPaths))
-	for _, repoPath := range repoPaths {
-		repoName := filepath.Base(repoPath)
+	added := make([]string, 0, len(repoConfigs))
+	for _, rc := range repoConfigs {
+		repoName := filepath.Base(rc.RepoPath)
 		wtPath := filepath.Join(wsDir, repoName)
 		if _, err := os.Stat(wtPath); err == nil {
 			continue
 		}
-		if err := gitops.AddWorktree(repoPath, wtPath, wsName, strategy); err != nil {
+
+		var err error
+		if rc.Strategy == "detach" {
+			err = gitops.AddWorktreeDetach(rc.RepoPath, wtPath, rc.BaseBranch)
+		} else {
+			err = gitops.AddWorktree(rc.RepoPath, wtPath, rc.Branch, rc.IsNewBranch, rc.BaseBranch)
+		}
+
+		if err != nil {
 			return added, fmt.Errorf("failed to add worktree for %s: %w", repoName, err)
 		}
 		added = append(added, wtPath)
@@ -107,7 +123,17 @@ func addResolved(cfg config.Config, wsName, wsDir string, repoQueries []string, 
 	for _, repoPath := range resolved {
 		repoName := filepath.Base(repoPath)
 		wtPath := filepath.Join(wsDir, repoName)
-		if err := gitops.AddWorktree(repoPath, wtPath, wsName, strategy); err != nil {
+		
+		var err error
+		if strategy == "detach" {
+			base := gitops.DetectBaseBranch(repoPath)
+			err = gitops.AddWorktreeDetach(repoPath, wtPath, base)
+		} else {
+			// For legacy Add/Create calls, we use the original logic (workspace name as branch)
+			err = gitops.AddWorktree(repoPath, wtPath, wsName, false, "")
+		}
+
+		if err != nil {
 			return added, err
 		}
 		added = append(added, wtPath)

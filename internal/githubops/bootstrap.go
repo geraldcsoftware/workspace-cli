@@ -56,8 +56,15 @@ func Bootstrap(cfg config.Config, repoName string, private, clone bool, workspac
 		return err
 	}
 	wtPath := filepath.Join(wsDir, nameOnly)
-	if err := gitops.AddWorktree(canonicalPath, wtPath, workspaceName, strategy); err != nil {
-		return err
+	var errAdd error
+	if strategy == "detach" {
+		base := gitops.DetectBaseBranch(canonicalPath)
+		errAdd = gitops.AddWorktreeDetach(canonicalPath, wtPath, base)
+	} else {
+		errAdd = gitops.AddWorktree(canonicalPath, wtPath, workspaceName, false, "")
+	}
+	if errAdd != nil {
+		return errAdd
 	}
 	fmt.Println("added to workspace:", wtPath)
 	return nil
