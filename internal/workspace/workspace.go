@@ -43,6 +43,40 @@ func Create(cfg config.Config, wsName string, repoQueries []string, strategy str
 	return addResolved(cfg, wsName, wsDir, repoQueries, strategy)
 }
 
+// CreateFromPaths creates a new workspace from already-resolved absolute repo
+// paths. All validation runs before any directory is created on disk.
+func CreateFromPaths(cfg config.Config, wsName string, repoPaths []string, strategy string) ([]string, error) {
+	wsDir := filepath.Join(cfg.WorkspaceBaseDir, wsName)
+	if _, err := os.Stat(wsDir); err == nil {
+		return nil, fmt.Errorf("workspace %q already exists", wsName)
+	}
+	for _, path := range repoPaths {
+		st, err := os.Stat(path)
+		if err != nil || !st.IsDir() {
+			return nil, fmt.Errorf("repo path not found: %s", path)
+		}
+		if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
+			return nil, fmt.Errorf("not a git repository: %s", path)
+		}
+	}
+	if err := os.MkdirAll(wsDir, 0o755); err != nil {
+		return nil, err
+	}
+	added := make([]string, 0, len(repoPaths))
+	for _, repoPath := range repoPaths {
+		repoName := filepath.Base(repoPath)
+		wtPath := filepath.Join(wsDir, repoName)
+		if _, err := os.Stat(wtPath); err == nil {
+			continue
+		}
+		if err := gitops.AddWorktree(repoPath, wtPath, wsName, strategy); err != nil {
+			return added, fmt.Errorf("failed to add worktree for %s: %w", repoName, err)
+		}
+		added = append(added, wtPath)
+	}
+	return added, nil
+}
+
 func Add(cfg config.Config, wsName string, repoQueries []string, strategy string) ([]string, error) {
 	wsDir := filepath.Join(cfg.WorkspaceBaseDir, wsName)
 	if st, err := os.Stat(wsDir); err != nil || !st.IsDir() {

@@ -64,11 +64,26 @@ func runWorkspacePicker(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	selected, err := tui.RunWorkspacePicker(items)
+	result, err := tui.RunWorkspacePicker(items)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("__SPACE_CD__:%s\n", selected.Path)
+	if result.CreateNew {
+		return runCreateInteractive(cfg)
+	}
+	fmt.Printf("__SPACE_CD__:%s\n", result.Selected.Path)
+	return nil
+}
+
+func runCreateInteractive(cfg config.Config) error {
+	wsPath, err := tui.RunCreateWorkspace(cfg)
+	if err != nil {
+		return err
+	}
+	if wsPath != "" {
+		fmt.Fprintf(os.Stderr, "workspace created: %s\n", wsPath)
+		fmt.Printf("__SPACE_CD__:%s\n", wsPath)
+	}
 	return nil
 }
 
