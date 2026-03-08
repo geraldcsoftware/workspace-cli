@@ -71,7 +71,9 @@ func runWorkspacePicker(cfg config.Config) error {
 	if result.CreateNew {
 		return runCreateInteractive(cfg)
 	}
-	fmt.Printf("__SPACE_CD__:%s\n", result.Selected.Path)
+	if result.SelectedPath != "" {
+		fmt.Printf("__SPACE_CD__:%s\n", result.SelectedPath)
+	}
 	return nil
 }
 

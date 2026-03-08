@@ -12,15 +12,21 @@ import (
 
 // PickerResult is returned by RunWorkspacePicker.
 type PickerResult struct {
-	Selected  workspace.Info
-	CreateNew bool
+	SelectedPath string
+	CreateNew    bool
 }
+
+const (
+	stepPicker = iota
+)
 
 type pickerModel struct {
 	items     []workspace.Info
 	cursor    int
 	selected  workspace.Info
 	createNew bool
+	step      int
+	success   successModel
 	quitting  bool
 	err       error
 }
@@ -47,10 +53,7 @@ func RunWorkspacePicker(items []workspace.Info) (PickerResult, error) {
 	if fm.createNew {
 		return PickerResult{CreateNew: true}, nil
 	}
-	if fm.selected.Name == "" {
-		return PickerResult{}, errors.New("no workspace selected")
-	}
-	return PickerResult{Selected: fm.selected}, nil
+	return PickerResult{SelectedPath: fm.selected.Path}, nil
 }
 
 func (m pickerModel) Init() tea.Cmd {
@@ -58,6 +61,12 @@ func (m pickerModel) Init() tea.Cmd {
 }
 
 func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.step == stepSuccess {
+		var cmd tea.Cmd
+		m.success, m.selected.Path, cmd = m.success.updateSuccess(msg)
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -80,8 +89,12 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if len(m.items) > 0 {
 				m.selected = m.items[m.cursor]
-				m.quitting = true
-				return m, tea.Quit
+				m.success = successModel{
+					path: m.selected.Path,
+					name: m.selected.Name,
+				}
+				m.step = stepSuccess
+				return m, nil
 			}
 		}
 	}
@@ -91,6 +104,9 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m pickerModel) View() string {
 	if m.quitting {
 		return ""
+	}
+	if m.step == stepSuccess {
+		return m.success.viewSuccess()
 	}
 
 	var b strings.Builder

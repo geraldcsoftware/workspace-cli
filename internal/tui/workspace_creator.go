@@ -14,11 +14,10 @@ import (
 	"github.com/geraldc/workspace-cli/internal/workspace"
 )
 
-type creatorStep int
-
 const (
-	stepName creatorStep = iota
-	stepRepoSearch   // enter a zoxide search term
+	stepName int = iota
+	stepRepoSearch
+   // enter a zoxide search term
 	stepRepoPick     // pick from multiple zoxide results
 	stepAddAnother   // "add another repo?"
 	stepBranchPick   // select branch for a repo
@@ -30,7 +29,7 @@ const (
 type creatorModel struct {
 	cfg config.Config
 
-	step    creatorStep
+	step    int
 	prevErr string // inline error shown on current step
 
 	nameInput string
@@ -49,6 +48,7 @@ type creatorModel struct {
 	newBranchName  string
 
 	createdPath string // set on success
+	success     successModel
 	quitting    bool
 	err         error
 }
@@ -66,19 +66,19 @@ type workspaceCreatedMsg struct{ path string }
 type workspaceErrMsg struct{ err error }
 
 // RunCreateWorkspace launches the interactive workspace-creation wizard.
-// On success it returns the path of the created workspace; on cancel it returns "".
+// On success it returns the path of the created workspace (to CD); on cancel or if no CD requested it returns "".
 func RunCreateWorkspace(cfg config.Config) (string, error) {
-m := creatorModel{cfg: cfg}
-p := tea.NewProgram(m)
-finalModel, runErr := p.Run()
-if runErr != nil {
-return "", runErr
-}
-fm := finalModel.(creatorModel)
-if fm.err != nil {
-return "", fm.err
-}
-return fm.createdPath, nil
+	m := creatorModel{cfg: cfg}
+	p := tea.NewProgram(m)
+	finalModel, runErr := p.Run()
+	if runErr != nil {
+		return "", runErr
+	}
+	fm := finalModel.(creatorModel)
+	if fm.err != nil {
+		return "", fm.err
+	}
+	return fm.createdPath, nil
 }
 
 func (m creatorModel) Init() tea.Cmd { return nil }
@@ -98,8 +98,12 @@ func (m creatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case workspaceCreatedMsg:
 		m.createdPath = msg.path
-		m.quitting = true
-		return m, tea.Quit
+		m.success = successModel{
+			path: msg.path,
+			name: strings.TrimSpace(m.nameInput),
+		}
+		m.step = stepSuccess
+		return m, nil
 	case workspaceErrMsg:
 		// Stay on confirm step; show the error so the user can fix it.
 		m.prevErr = msg.err.Error()
@@ -127,6 +131,8 @@ func (m creatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quitting = true
 				return m, tea.Quit
 			}
+		case stepSuccess:
+			return m.updateSuccess(msg)
 		}
 	}
 	return m, nil
@@ -425,6 +431,12 @@ func (m creatorModel) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m creatorModel) updateSuccess(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.success, m.createdPath, cmd = m.success.updateSuccess(msg)
+	return m, cmd
+}
+
 // createCmd fires off workspace creation as a bubbletea command so the TUI
 // remains responsive and can display the result (or error) inline.
 func (m creatorModel) createCmd() tea.Cmd {
@@ -573,6 +585,9 @@ func (m creatorModel) View() string {
 	case stepCreating:
 		b.WriteString(helpStyle.Render(
 			fmt.Sprintf("Creating workspace %q…", strings.TrimSpace(m.nameInput))))
+
+	case stepSuccess:
+		b.WriteString(m.success.viewSuccess())
 	}
 
 	return b.String()
