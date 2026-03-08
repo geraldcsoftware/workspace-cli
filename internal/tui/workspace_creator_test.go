@@ -31,19 +31,18 @@ func TestCreatorModel_SuccessTransition(t *testing.T) {
 	// Test Enter (Go to workspace)
 	newModel, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newModel.(creatorModel)
-	if !m.quitting {
-		t.Error("expected quitting after Enter")
+	if cmd == nil || cmd() != tea.Quit() {
+		t.Error("expected tea.Quit command after Enter")
 	}
 	if m.createdPath != "/tmp/my-ws" {
 		t.Error("expected path to be preserved for CD")
 	}
 
 	// Test Q (Done - No CD)
-	m.quitting = false
-	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	newModel, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
 	m = newModel.(creatorModel)
-	if !m.quitting {
-		t.Error("expected quitting after Q")
+	if cmd == nil || cmd() != tea.Quit() {
+		t.Error("expected tea.Quit command after Q")
 	}
 	if m.createdPath != "" {
 		t.Errorf("expected empty path after Q, got %s", m.createdPath)
