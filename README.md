@@ -1,6 +1,8 @@
 # space
 
-`space` is a powerful CLI workspace manager for Go developers. It helps you organize your projects by creating isolated workspaces using Git worktrees, allowing you to work on multiple features or versions of the same repository simultaneously without the overhead of multiple clones.
+`space` is a powerful CLI workspace manager for any developer. It helps you organize your projects by creating isolated workspaces using Git worktrees, allowing you to work on multiple features or versions of the same repository simultaneously without the overhead of multiple clones.
+
+While `space` is built using Go, it is designed to manage repositories of any language or framework. It is particularly useful for developers who want to group related repository worktrees under a single directory for focused, project-specific workflows.
 
 ## Features
 
